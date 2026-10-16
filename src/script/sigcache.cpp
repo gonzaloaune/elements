@@ -11,6 +11,7 @@
 #include "uint256.h"
 #include "util.h"
 
+#include "crypto/common.h"
 #include "cuckoocache.h"
 #include <boost/thread.hpp>
 
@@ -63,9 +64,23 @@ public:
         CSHA256().Write(nonce.begin(), 32).Write(hash.begin(), 32).Write(&pubkey[0], pubkey.size()).Write(&vchSig[0], vchSig.size()).Write(&vchCommitment[0], vchCommitment.size()).Write(&scriptPubKey[0], scriptPubKey.size()).Finalize(entry.begin());
     }
 
-    void ComputeEntry(uint256& entry, const std::vector<unsigned char>& proof, const std::vector<unsigned char>& valueCommitment, const std::vector<unsigned char>& assetCommitment, const CScript& scriptPubKey)
+    void ComputeEntry(uint256& entry, const std::vector<unsigned char>& proof, const std::vector<unsigned char>& commitment, const std::vector<unsigned char>& assetCommitment, const CScript& scriptPubKey)
     {
-        CSHA256().Write(nonce.begin(), nonce.size()).Write(proof.data(), proof.size()).Write(valueCommitment.data(), valueCommitment.size()).Write(assetCommitment.data(), assetCommitment.size()).Write(scriptPubKey.data(), scriptPubKey.size()).Finalize(entry.begin());
+        // Commit to every input that affects the rangeproof verification result
+        // (proof, value commitment, asset commitment and scriptPubKey), length-prefixed
+        // so that the variable-length fields cannot be shifted into one another.
+        unsigned char len[8];
+        CSHA256 sha;
+        sha.Write(nonce.begin(), nonce.size());
+        WriteLE64(len, proof.size());
+        sha.Write(len, sizeof(len)).Write(proof.data(), proof.size());
+        WriteLE64(len, commitment.size());
+        sha.Write(len, sizeof(len)).Write(commitment.data(), commitment.size());
+        WriteLE64(len, assetCommitment.size());
+        sha.Write(len, sizeof(len)).Write(assetCommitment.data(), assetCommitment.size());
+        WriteLE64(len, scriptPubKey.size());
+        sha.Write(len, sizeof(len)).Write(scriptPubKey.size() ? &scriptPubKey.front() : NULL, scriptPubKey.size());
+        sha.Finalize(entry.begin());
     }
 
     bool
