@@ -11,6 +11,7 @@
 #include "uint256.h"
 #include "util.h"
 
+#include "crypto/common.h"
 #include "cuckoocache.h"
 #include <boost/thread.hpp>
 
@@ -63,9 +64,23 @@ public:
         CSHA256().Write(nonce.begin(), 32).Write(hash.begin(), 32).Write(&pubkey[0], pubkey.size()).Write(&vchSig[0], vchSig.size()).Write(&vchCommitment[0], vchCommitment.size()).Write(&scriptPubKey[0], scriptPubKey.size()).Finalize(entry.begin());
     }
 
-    void ComputeEntry(uint256& entry, const std::vector<unsigned char>& proof, const std::vector<unsigned char>& commitment)
+    void ComputeEntry(uint256& entry, const std::vector<unsigned char>& proof, const std::vector<unsigned char>& commitment, const std::vector<unsigned char>& assetCommitment, const CScript& scriptPubKey)
     {
-        CSHA256().Write(nonce.begin(), nonce.size()).Write(proof.data(), proof.size()).Write(commitment.data(), commitment.size()).Finalize(entry.begin());
+        // Commit to every input that affects the rangeproof verification result
+        // (proof, value commitment, asset commitment and scriptPubKey), length-prefixed
+        // so that the variable-length fields cannot be shifted into one another.
+        unsigned char len[8];
+        CSHA256 sha;
+        sha.Write(nonce.begin(), nonce.size());
+        WriteLE64(len, proof.size());
+        sha.Write(len, sizeof(len)).Write(proof.data(), proof.size());
+        WriteLE64(len, commitment.size());
+        sha.Write(len, sizeof(len)).Write(commitment.data(), commitment.size());
+        WriteLE64(len, assetCommitment.size());
+        sha.Write(len, sizeof(len)).Write(assetCommitment.data(), assetCommitment.size());
+        WriteLE64(len, scriptPubKey.size());
+        sha.Write(len, sizeof(len)).Write(scriptPubKey.size() ? &scriptPubKey.front() : NULL, scriptPubKey.size());
+        sha.Finalize(entry.begin());
     }
 
     bool
@@ -151,7 +166,7 @@ bool CachingTransactionSignatureChecker::VerifySignature(const std::vector<unsig
 bool CachingRangeProofChecker::VerifyRangeProof(const std::vector<unsigned char>& vchRangeProof, const std::vector<unsigned char>& vchValueCommitment, const std::vector<unsigned char>& vchAssetCommitment, const CScript& scriptPubKey, const secp256k1_context* secp256k1_ctx_verify_amounts) const
 {
     uint256 entry;
-    rangeProofCache.ComputeEntry(entry, vchRangeProof, vchValueCommitment);
+    rangeProofCache.ComputeEntry(entry, vchRangeProof, vchValueCommitment, vchAssetCommitment, scriptPubKey);
 
     if (rangeProofCache.Get(entry, !store)) {
         return true;
